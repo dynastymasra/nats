@@ -15,8 +15,8 @@ Use [Golang Dep](https://golang.github.io/dep/) command for install all dependen
 Before run this service. Make sure all requirements dependencies has been installed likes **Golang, NATS, and Dep**
 
 ### Local
-This app has 2 folder, `publish` and `subscribe`.
+This app has 2 folders, `publish` and `subscribe`.
 
 App in folder `publish` used for send message to NATS server and App in folder `subscribe` used for consuming message from NATS server.
 
-Use command `go run main.go` in `publish` or `subscribe` folder for run this application.
+Use command `go run main.go` in `publish` or `subscribe` folders for run this application.
