@@ -1,62 +1,83 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
-	"github.com/nats-io/go-nats-streaming"
-	"github.com/sirupsen/logrus"
+	"github.com/nats-io/nats.go"
 )
 
 const (
-	NatsURL = "nats://nats:nats@localhost:4222"
+	NatsURL = "nats://localhost:14222"
 )
 
 func main() {
-	clientID := time.Now().Unix()
-
-	sc, err := stan.Connect("dynastymasra-cluster", fmt.Sprintf("%v", clientID),
-		stan.NatsURL(NatsURL),
-		stan.ConnectWait(time.Minute),
-		stan.Pings(60, 5),
-		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			logrus.Warningln("NATS connection is lost")
-			if err != nil {
-				logrus.WithError(err).Fatalln("Error connection lost")
-			}
-		}))
+	nc, err := nats.Connect(NatsURL,
+		nats.UserInfo("nats", "root"),
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(10),
+		nats.ReconnectWait(time.Minute),
+		nats.PingInterval(time.Minute),
+	)
 	if err != nil {
-		logrus.WithError(err).Fatalln("Cannot connect to nats cluster")
+		log.Fatalln(err)
 	}
-	defer sc.Close()
+	defer nc.Close()
 
-	logrus.WithField("client_id", clientID).Infoln("Publisher start")
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	as, err := js.AddStream(&nats.StreamConfig{
+		Name:        "test",
+		Description: "Event stream from test",
+		Subjects:    []string{"TEST.*.*"},
+	})
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	fmt.Println("Name:", as.Config.Name)
+	fmt.Println("Description:", as.Config.Description)
+	fmt.Println("Subjects:", as.Config.Subjects)
 
 	r := rand.Intn(10)
 	for i := 0; i < 10; i++ {
 		// Simple Synchronous Publisher
-		if err := sc.Publish("foo", []byte(fmt.Sprintf("Hello World Synchronous %d", i))); err != nil {
-			logrus.WithError(err).Errorln("Failed publish message")
+		fmt.Println("============================== PublishMsg ==============================")
+		msg := nats.NewMsg("TEST.sync.test")
+		msg.Data = []byte(fmt.Sprintf("Hello World Synchronous %d", i))
+		msg.Header.Add("request_id", fmt.Sprintf("%d", i))
+		pub, err := js.PublishMsg(msg, nats.Context(context.TODO()))
+		if err != nil {
+			fmt.Printf("PublishMsg: %d - %v \n", i, err)
+			continue
 		}
+
+		fmt.Println("Domain:", pub.Domain)
+		fmt.Println("Stream:", pub.Stream)
+		fmt.Println("Duplicate:", pub.Duplicate)
+		fmt.Println("Sequence:", pub.Sequence)
 
 		time.Sleep(time.Duration(r) * time.Second)
 	}
 
 	for i := 0; i < 10; i++ {
 		// Simple Asynchronous Publisher
-		nuid, err := sc.PublishAsync("foo", []byte(fmt.Sprintf("Hello World Asynchronous %d", i)), func(nuid string, err error) {
-			if err != nil {
-				logrus.WithError(err).Errorln("Failed publish message NUID " + nuid)
-			} else {
-				logrus.Infoln("Received ack for message nuid " + nuid)
-			}
-		})
+		fmt.Println("============================== PublishMsgAsync ==============================")
+		msg := nats.NewMsg("TEST.async.test")
+		msg.Data = []byte(fmt.Sprintf("Hello World Asyncronous %d", i))
+		msg.Header.Add("request_id", fmt.Sprintf("%d", i))
+		pub, err := js.PublishMsgAsync(msg)
 		if err != nil {
-			logrus.WithError(err).Errorln("Failed publish message")
+			fmt.Printf("PublishMsgAsync: %d - %v \n", i, err)
+			continue
 		}
-		logrus.Infoln("Asynchronous NUID = " + nuid)
 
-		time.Sleep(time.Duration(r) * time.Second)
+		fmt.Println("Message:", pub.Msg())
 	}
 }

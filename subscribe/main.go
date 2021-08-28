@@ -2,61 +2,62 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/nats-io/go-nats-streaming"
-	"github.com/sirupsen/logrus"
+	"github.com/nats-io/nats.go"
 )
 
 const (
-	NatsURL = "nats://nats:nats@localhost:4222"
+	NatsURL = "nats://localhost:14222"
 )
 
 func main() {
 	stop := make(chan os.Signal)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
-	clientID := time.Now().Unix()
 
-	sc, err := stan.Connect("dynastymasra-cluster", fmt.Sprintf("%v", clientID),
-		stan.NatsURL(NatsURL),
-		stan.ConnectWait(time.Minute),
-		stan.Pings(60, 5),
-		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			logrus.Warningln("NATS connection is lost")
-			if err != nil {
-				logrus.WithError(err).Fatalln("Error connection lost")
-			}
-		}))
+	nc, err := nats.Connect(NatsURL,
+		nats.UserInfo("nats", "root"),
+		nats.RetryOnFailedConnect(true),
+		nats.MaxReconnects(10),
+		nats.ReconnectWait(time.Minute),
+		nats.PingInterval(time.Minute),
+	)
 	if err != nil {
-		logrus.WithError(err).Fatalln("Cannot connect to nats cluster")
+		log.Fatalln(err)
 	}
-	defer sc.Close()
+	defer nc.Close()
 
-	logrus.WithField("client_id", clientID).Infoln("Subscriber start")
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalln(err)
+	}
 
-	// Subscribe message with group
-	sub, err := sc.QueueSubscribe("foo", "group-1", func(msg *stan.Msg) {
-		logrus.WithFields(logrus.Fields{
-			"timestamp":   msg.Timestamp,
-			"redelivered": msg.Redelivered,
-			"reply":       msg.Reply,
-			"subject":     msg.Subject,
-			"data":        string(msg.Data),
-		}).Infoln("QueueSubscribe message from server")
+	sub, err := js.QueueSubscribe("TEST.*.*", "TEST", func(msg *nats.Msg) {
+		fmt.Println("============================== Wildcard ==============================")
+		fmt.Println("Subject", msg.Subject)
+		fmt.Println("Reply", msg.Reply)
+		fmt.Println("Header:", msg.Header)
+		fmt.Println("Sub.Subject:", msg.Sub.Subject)
+		fmt.Println("msg.Sub.Queue:", msg.Sub.Queue)
+		fmt.Println("msg.Sub.Type:", msg.Sub.Type())
+		fmt.Println("Data:", string(msg.Data))
 		msg.Ack()
-	}, stan.DurableName("test-123"), stan.SetManualAckMode())
+	}, nats.Durable("TEST"), nats.ManualAck(), nats.DeliverLast())
 	if err != nil {
-		logrus.WithError(err).Fatalln("Cannot subscribe")
+		log.Fatalln(err)
 	}
-	logrus.Infoln(sub.IsValid())
+
+	fmt.Println("Subject:", sub.Subject)
 
 	select {
 	case sig := <-stop:
-		sub.Unsubscribe()
-		logrus.Warningln(fmt.Sprintf("Service shutdown because %+v", sig))
+		fmt.Printf("Service shutdown because %+v \n", sig)
+		//sub.Drain()
+		//sub.Unsubscribe()
 		os.Exit(0)
 	}
 }
